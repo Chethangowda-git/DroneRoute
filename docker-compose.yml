@@ -1,0 +1,74 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: droneroute_db
+    environment:
+      POSTGRES_USER: drone
+      POSTGRES_PASSWORD: dronepass
+      POSTGRES_DB: droneroute
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U drone -d droneroute"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  planner:
+    build:
+      context: ./planner
+    container_name: droneroute_planner
+    environment:
+      DATABASE_URL: postgresql://drone:dronepass@db:5432/droneroute
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./planner:/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  backend:
+    build:
+      context: ./backend
+    container_name: droneroute_backend
+    environment:
+      PORT: 3001
+      DB_HOST: db
+      DB_USER: drone
+      DB_PASSWORD: dronepass
+      DB_NAME: droneroute
+      PLANNER_URL: http://planner:8000
+    ports:
+      - "3001:3001"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    command: npm run dev
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: droneroute_frontend
+    environment:
+      REACT_APP_BACKEND_URL: http://localhost:3001
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    stdin_open: true
+
+volumes:
+  postgres_data:
